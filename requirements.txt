@@ -4,3 +4,4 @@ numpy==1.24.3
 pandas==2.0.3
 pillow==10.3.0
 fpdf==1.7.2
+gdown
