@@ -1,0 +1,7 @@
+streamlit
+tensorflow-cpu
+numpy
+pandas
+pillow
+fpdf
+gunicorn
