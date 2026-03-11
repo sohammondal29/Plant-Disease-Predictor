@@ -18,12 +18,12 @@ from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_i
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(BASE_DIR,"plant_model_fixed.keras")
+MODEL_PATH = os.path.join(BASE_DIR,"plant_disease_prediction_model.h5")
 CLASS_FILE = os.path.join(BASE_DIR,"class_indices.json")
 DB_FILE = os.path.join(BASE_DIR,"history.db")
 EXAMPLE_FOLDER = os.path.join(BASE_DIR,"Examples")
 
-FILE_ID = "1Ux5QuMerifSrgGYn-8gox__GfnYuoGjS"
+FILE_ID = "1akhIIwfWmp3aD-gGl9nGaoY9uRs2iorP"
 
 
 # ---------------- DOWNLOAD MODEL ---------------- #
@@ -35,7 +35,7 @@ def download_model():
         url = f"https://drive.google.com/uc?id={FILE_ID}"
 
         with st.spinner("Downloading AI model (first run only)..."):
-            gdown.download(url, MODEL_PATH, quiet=False)
+            gdown.download(url, MODEL_PATH, quiet=False, fuzzy=True)
 
 download_model()
 
@@ -60,7 +60,7 @@ disease_model = load_disease_model()
 leaf_model = load_leaf_detector()
 
 
-# ---------------- LOAD CLASS FILE ---------------- #
+# ---------------- LOAD CLASS INDICES ---------------- #
 
 with open(CLASS_FILE) as f:
     class_indices = json.load(f)
@@ -78,34 +78,16 @@ cur.execute(
 conn.commit()
 
 
-# ---------------- DISEASE INFORMATION ---------------- #
-
-disease_info = {
-
-"Tomato Yellow Leaf Curl Virus":
-"A viral disease causing yellowing and curling of tomato leaves. It spreads through whiteflies and reduces crop yield.",
-
-"Potato Late Blight":
-"A fungal disease caused by Phytophthora infestans creating dark lesions on leaves and spreading rapidly in humid environments.",
-
-"Apple Scab":
-"A fungal disease that causes dark spots on apple leaves and fruits in cool wet climates."
-
-}
-
-
-# ---------------- REPORT GENERATION ---------------- #
+# ---------------- PDF REPORT ---------------- #
 
 def create_report(plant,disease,confidence,severity):
 
     pdf = FPDF()
-
     pdf.add_page()
 
     pdf.set_font("Arial",size=14)
 
     pdf.cell(200,10,"Plant Disease Diagnosis Report",ln=True,align="C")
-
     pdf.ln(10)
 
     pdf.cell(200,10,f"Plant: {plant}",ln=True)
@@ -113,13 +95,7 @@ def create_report(plant,disease,confidence,severity):
     pdf.cell(200,10,f"Confidence: {confidence:.2f}%",ln=True)
     pdf.cell(200,10,f"Severity: {severity}",ln=True)
 
-    pdf.ln(10)
-
-    if disease in disease_info:
-        pdf.multi_cell(0,10,f"About the Disease:\n{disease_info[disease]}")
-
     file="report.pdf"
-
     pdf.output(file)
 
     return file
@@ -130,11 +106,9 @@ def create_report(plant,disease,confidence,severity):
 def preprocess_image(image,size=(224,224)):
 
     image=image.resize(size)
-
     img=np.array(image)
 
     img=img.astype("float32")/255.0
-
     img=np.expand_dims(img,axis=0)
 
     return img
@@ -147,7 +121,6 @@ def predict_disease(image):
     pred=disease_model.predict(img,verbose=0)
 
     index=np.argmax(pred)
-
     conf=float(np.max(pred))*100
 
     label=class_indices[str(index)]
@@ -155,12 +128,13 @@ def predict_disease(image):
     return label,conf,pred
 
 
+# ---------------- LEAF DETECTION ---------------- #
+
 def detect_leaf(image):
 
     img=image.resize((224,224))
 
     arr=np.array(img)
-
     arr=np.expand_dims(arr,axis=0)
 
     arr=preprocess_input(arr)
@@ -201,7 +175,7 @@ def load_history():
     )
 
 
-# ---------------- SEVERITY ESTIMATION ---------------- #
+# ---------------- SEVERITY ---------------- #
 
 def severity(image):
 
@@ -210,17 +184,14 @@ def severity(image):
     gray=np.mean(img,axis=2)
 
     infected=np.sum(gray<120)
-
     total=gray.size
 
     ratio=infected/total
 
     if ratio<0.1:
         return "Low"
-
     elif ratio<0.3:
         return "Moderate"
-
     else:
         return "Severe"
 
@@ -230,7 +201,7 @@ def severity(image):
 st.set_page_config(page_title="Plant Disease Predictor",layout="wide")
 
 
-# ---------------- DARK UI THEME ---------------- #
+# ---------------- DARK UI ---------------- #
 
 st.markdown("""
 <style>
@@ -240,13 +211,7 @@ background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
 color:white;
 }
 
-h1 {
-text-align:center;
-font-weight:700;
-color:white;
-}
-
-h2, h3 {
+h1,h2,h3 {
 color:white;
 }
 
@@ -254,27 +219,11 @@ label {
 color:white !important;
 }
 
-[data-testid="stMarkdownContainer"] {
-color:white;
-}
-
-.stButton>button {
-background-color:#00c9a7;
-color:white;
-border-radius:8px;
-}
-
-.stDownloadButton>button {
-background-color:#0077ff;
-color:white;
-border-radius:8px;
-}
-
 </style>
 """,unsafe_allow_html=True)
 
 
-st.title("🌿 Plant Disease Predictor")
+st.title("🌿 AI Plant Disease Detection System")
 
 
 # ---------------- IMAGE INPUT ---------------- #
@@ -343,7 +292,6 @@ if image is not None:
                 label,conf,pred=predict_disease(image)
 
             plant,disease=label.split("___")
-
             disease=disease.replace("_"," ")
 
             sev=severity(image)
@@ -351,18 +299,30 @@ if image is not None:
             save_history(plant,disease,conf)
 
             st.success(f"Plant: {plant}")
-
             st.error(f"Disease: {disease}")
-
             st.info(f"Confidence: {conf:.2f}%")
-
             st.warning(f"Severity Level: {sev}")
 
-            if disease in disease_info:
 
-                st.subheader("About the Disease")
+            # ---------- TOP PREDICTIONS ----------
 
-                st.write(disease_info[disease])
+            st.subheader("Top Predictions")
+
+            top3 = pred[0].argsort()[-3:][::-1]
+
+            for i in top3:
+
+                name = class_indices[str(i)]
+
+                p,d = name.split("___")
+                d = d.replace("_"," ")
+
+                c = pred[0][i]*100
+
+                st.write(f"{p} — {d} : {c:.2f}%")
+
+
+            # ---------- REPORT ----------
 
             st.subheader("Download Report")
 
