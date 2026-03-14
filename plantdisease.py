@@ -1,6 +1,5 @@
 import os
 os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-os.environ["TF_USE_LEGACY_KERAS"] = "1"
 
 import json
 import numpy as np
@@ -12,6 +11,7 @@ from PIL import Image
 from datetime import datetime
 from fpdf import FPDF
 import gdown
+import gc
 
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
 
@@ -28,7 +28,6 @@ FILE_ID = "1akhIIwfWmp3aD-gGl9nGaoY9uRs2iorP"
 
 # ---------------- DOWNLOAD MODEL ---------------- #
 
-@st.cache_resource
 def download_model():
 
     if not os.path.exists(MODEL_PATH):
@@ -41,7 +40,7 @@ def download_model():
 download_model()
 
 
-# ---------------- LOAD MODELS ---------------- #
+# ---------------- LOAD DISEASE MODEL ---------------- #
 
 @st.cache_resource
 def load_disease_model():
@@ -50,20 +49,20 @@ def load_disease_model():
 
     model = tf.keras.models.load_model(
         MODEL_PATH,
-        compile=False,
-        safe_mode=False
+        compile=False
     )
 
     return model
 
 
+disease_model = load_disease_model()
+
+
+# ---------------- LOAD LEAF DETECTOR ---------------- #
+
 @st.cache_resource
 def load_leaf_detector():
     return MobileNetV2(weights="imagenet")
-
-
-disease_model = load_disease_model()
-leaf_model = load_leaf_detector()
 
 
 # ---------------- LOAD CLASS INDICES ---------------- #
@@ -111,10 +110,11 @@ def create_report(plant,disease,confidence,severity):
 
 def preprocess_image(image,size=(224,224)):
 
-    image=image.resize(size)
-    img=np.array(image)
+    image=image.resize(size).convert("RGB")
 
-    img=img.astype("float32")/255.0
+    img=np.array(image,dtype=np.float32)
+
+    img=img/255.0
     img=np.expand_dims(img,axis=0)
 
     return img
@@ -138,9 +138,12 @@ def predict_disease(image):
 
 def detect_leaf(image):
 
-    img=image.resize((224,224))
+    leaf_model = load_leaf_detector()
 
-    arr=np.array(img)
+    img=image.resize((224,224)).convert("RGB")
+
+    arr=np.array(img,dtype=np.float32)
+
     arr=np.expand_dims(arr,axis=0)
 
     arr=preprocess_input(arr)
@@ -154,7 +157,12 @@ def detect_leaf(image):
     for _,label,_ in decoded:
         for word in plant_keywords:
             if word in label.lower():
+
+                gc.collect()
+
                 return True
+
+    gc.collect()
 
     return False
 
