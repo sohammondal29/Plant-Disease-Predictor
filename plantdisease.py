@@ -42,11 +42,18 @@ download_model()
 # ---------------- LOAD MODELS ---------------- #
 
 @st.cache_resource
+@st.cache_resource
 def load_disease_model():
 
     tf.keras.backend.clear_session()
 
-    return tf.keras.models.load_model(MODEL_PATH, compile=False)
+    model = tf.keras.models.load_model(
+        MODEL_PATH,
+        compile=False,
+        safe_mode=False
+    )
+
+    return model
 
 
 @st.cache_resource
