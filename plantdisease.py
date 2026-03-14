@@ -11,6 +11,9 @@ from PIL import Image
 from datetime import datetime
 from fpdf import FPDF
 import gdown
+import gc
+
+from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
 
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
@@ -37,7 +40,7 @@ def download_model():
 download_model()
 
 
-# ---------------- LOAD MODEL ---------------- #
+# ---------------- LOAD DISEASE MODEL ---------------- #
 
 @st.cache_resource
 def load_disease_model():
@@ -53,6 +56,13 @@ def load_disease_model():
 
 
 disease_model = load_disease_model()
+
+
+# ---------------- LOAD LEAF DETECTOR ---------------- #
+
+@st.cache_resource
+def load_leaf_detector():
+    return MobileNetV2(weights="imagenet")
 
 
 # ---------------- LOAD CLASS INDICES ---------------- #
@@ -100,10 +110,11 @@ def create_report(plant,disease,confidence,severity):
 
 def preprocess_image(image,size=(224,224)):
 
-    image=image.resize(size)
-    img=np.array(image)
+    image=image.resize(size).convert("RGB")
 
-    img=img.astype("float32")/255.0
+    img=np.array(image,dtype=np.float32)
+
+    img=img/255.0
     img=np.expand_dims(img,axis=0)
 
     return img
@@ -121,6 +132,39 @@ def predict_disease(image):
     label=class_indices[str(index)]
 
     return label,conf,pred
+
+
+# ---------------- LEAF DETECTION ---------------- #
+
+def detect_leaf(image):
+
+    leaf_model = load_leaf_detector()
+
+    img=image.resize((224,224)).convert("RGB")
+
+    arr=np.array(img,dtype=np.float32)
+
+    arr=np.expand_dims(arr,axis=0)
+
+    arr=preprocess_input(arr)
+
+    preds=leaf_model.predict(arr,verbose=0)
+
+    decoded=decode_predictions(preds,top=5)[0]
+
+    plant_keywords=["leaf","tree","plant","flower","corn","grape","apple"]
+
+    for _,label,_ in decoded:
+        for word in plant_keywords:
+            if word in label.lower():
+
+                gc.collect()
+
+                return True
+
+    gc.collect()
+
+    return False
 
 
 # ---------------- DATABASE FUNCTIONS ---------------- #
@@ -251,51 +295,57 @@ if image is not None:
 
     with col2:
 
-        with st.spinner("Analyzing leaf disease..."):
+        if not detect_leaf(image):
 
-            label,conf,pred=predict_disease(image)
+            st.error("The uploaded image does not appear to contain a plant leaf.")
 
-        plant,disease=label.split("___")
-        disease=disease.replace("_"," ")
+        else:
 
-        sev=severity(image)
+            with st.spinner("Analyzing leaf disease..."):
 
-        save_history(plant,disease,conf)
+                label,conf,pred=predict_disease(image)
 
-        st.success(f"Plant: {plant}")
-        st.error(f"Disease: {disease}")
-        st.info(f"Confidence: {conf:.2f}%")
-        st.warning(f"Severity Level: {sev}")
+            plant,disease=label.split("___")
+            disease=disease.replace("_"," ")
 
+            sev=severity(image)
 
-        st.subheader("Top Predictions")
+            save_history(plant,disease,conf)
 
-        top3 = pred[0].argsort()[-3:][::-1]
-
-        for i in top3:
-
-            name = class_indices[str(i)]
-
-            p,d = name.split("___")
-            d = d.replace("_"," ")
-
-            c = pred[0][i]*100
-
-            st.write(f"{p} — {d} : {c:.2f}%")
+            st.success(f"Plant: {plant}")
+            st.error(f"Disease: {disease}")
+            st.info(f"Confidence: {conf:.2f}%")
+            st.warning(f"Severity Level: {sev}")
 
 
-        st.subheader("Download Report")
+            st.subheader("Top Predictions")
 
-        report=create_report(plant,disease,conf,sev)
+            top3 = pred[0].argsort()[-3:][::-1]
 
-        with open(report,"rb") as file:
+            for i in top3:
 
-            st.download_button(
-                label="Download Diagnosis Report",
-                data=file,
-                file_name="plant_disease_report.pdf",
-                mime="application/pdf"
-            )
+                name = class_indices[str(i)]
+
+                p,d = name.split("___")
+                d = d.replace("_"," ")
+
+                c = pred[0][i]*100
+
+                st.write(f"{p} — {d} : {c:.2f}%")
+
+
+            st.subheader("Download Report")
+
+            report=create_report(plant,disease,conf,sev)
+
+            with open(report,"rb") as file:
+
+                st.download_button(
+                    label="Download Diagnosis Report",
+                    data=file,
+                    file_name="plant_disease_report.pdf",
+                    mime="application/pdf"
+                )
 
 
 # ---------------- HISTORY ---------------- #
