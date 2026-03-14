@@ -1,9 +1,6 @@
 import os
-os.environ["TF_CPP_MIN_LOG_LEVEL"] = "2"
-
 import json
 import numpy as np
-import tensorflow as tf
 import streamlit as st
 import pandas as pd
 import sqlite3
@@ -11,27 +8,29 @@ from PIL import Image
 from datetime import datetime
 from fpdf import FPDF
 import gdown
+import tensorflow as tf
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-MODEL_PATH = os.path.join(BASE_DIR,"plant_disease_prediction_model.h5")
+MODEL_PATH = os.path.join(BASE_DIR,"plant_model.tflite")
 CLASS_FILE = os.path.join(BASE_DIR,"class_indices.json")
 DB_FILE = os.path.join(BASE_DIR,"history.db")
 EXAMPLE_FOLDER = os.path.join(BASE_DIR,"Examples")
 
-FILE_ID = "1akhIIwfWmp3aD-gGl9nGaoY9uRs2iorP"
+FILE_ID = "YOUR_TFLITE_MODEL_DRIVE_ID"
 
 
 # ---------------- DOWNLOAD MODEL ---------------- #
 
+@st.cache_resource
 def download_model():
 
     if not os.path.exists(MODEL_PATH):
 
         url = f"https://drive.google.com/uc?id={FILE_ID}"
 
-        with st.spinner("Downloading AI model (first run only)..."):
-            gdown.download(url, MODEL_PATH, quiet=False, fuzzy=True)
+        with st.spinner("Downloading AI model..."):
+            gdown.download(url, MODEL_PATH, quiet=False)
 
 download_model()
 
@@ -39,18 +38,17 @@ download_model()
 # ---------------- LOAD MODEL ---------------- #
 
 @st.cache_resource
-def load_disease_model():
+def load_model():
 
-    tf.keras.backend.clear_session()
+    interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
+    interpreter.allocate_tensors()
 
-    model = tf.keras.models.load_model(
-        MODEL_PATH,
-        compile=False
-    )
+    return interpreter
 
-    return model
+interpreter = load_model()
 
-disease_model = load_disease_model()
+input_details = interpreter.get_input_details()
+output_details = interpreter.get_output_details()
 
 
 # ---------------- LOAD CLASS INDICES ---------------- #
@@ -96,9 +94,9 @@ def create_report(plant,disease,confidence,severity):
 
 # ---------------- IMAGE PROCESSING ---------------- #
 
-def preprocess_image(image,size=(224,224)):
+def preprocess_image(image):
 
-    image=image.resize(size).convert("RGB")
+    image=image.resize((224,224)).convert("RGB")
 
     img=np.array(image,dtype=np.float32)
 
@@ -112,7 +110,11 @@ def predict_disease(image):
 
     img=preprocess_image(image)
 
-    pred=disease_model.predict(img,verbose=0)
+    interpreter.set_tensor(input_details[0]['index'], img)
+
+    interpreter.invoke()
+
+    pred = interpreter.get_tensor(output_details[0]['index'])
 
     index=np.argmax(pred)
     conf=float(np.max(pred))*100
@@ -122,7 +124,7 @@ def predict_disease(image):
     return label,conf,pred
 
 
-# ---------------- GREEN PIXEL LEAF DETECTION ---------------- #
+# ---------------- LEAF DETECTION ---------------- #
 
 def detect_leaf(image):
 
@@ -184,37 +186,12 @@ def severity(image):
         return "Severe"
 
 
-# ---------------- PAGE CONFIG ---------------- #
+# ---------------- UI ---------------- #
 
 st.set_page_config(page_title="Plant Disease Predictor",layout="wide")
 
-
-# ---------------- DARK UI ---------------- #
-
-st.markdown("""
-<style>
-
-.stApp {
-background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-color:white;
-}
-
-h1,h2,h3 {
-color:white;
-}
-
-label {
-color:white !important;
-}
-
-</style>
-""",unsafe_allow_html=True)
-
-
 st.title("🌿 AI Plant Disease Detection System")
 
-
-# ---------------- IMAGE INPUT ---------------- #
 
 if "image" not in st.session_state:
     st.session_state.image=None
@@ -222,24 +199,11 @@ if "image" not in st.session_state:
 
 input_choice=st.radio(
 "Select Image Source",
-["Use Example Image","Upload Leaf Image","Camera"]
+["Upload Leaf Image","Camera"]
 )
 
 
-if input_choice=="Use Example Image":
-
-    example_files=sorted(os.listdir(EXAMPLE_FOLDER))
-
-    selected_example=st.selectbox("Select Example",example_files)
-
-    if selected_example:
-
-        example_path=os.path.join(EXAMPLE_FOLDER,selected_example)
-
-        st.session_state.image=Image.open(example_path).convert("RGB")
-
-
-elif input_choice=="Upload Leaf Image":
+if input_choice=="Upload Leaf Image":
 
     uploaded=st.file_uploader("Browse Leaf Image",type=["jpg","jpeg","png"])
 
@@ -258,14 +222,12 @@ elif input_choice=="Camera":
 image=st.session_state.image
 
 
-# ---------------- PREDICTION ---------------- #
-
 if image is not None:
 
     col1,col2=st.columns(2)
 
     with col1:
-        st.image(image,width=500)
+        st.image(image,width=400)
 
     with col2:
 
@@ -275,9 +237,7 @@ if image is not None:
 
         else:
 
-            with st.spinner("Analyzing leaf disease..."):
-
-                label,conf,pred=predict_disease(image)
+            label,conf,pred=predict_disease(image)
 
             plant,disease=label.split("___")
             disease=disease.replace("_"," ")
@@ -292,53 +252,8 @@ if image is not None:
             st.warning(f"Severity Level: {sev}")
 
 
-            st.subheader("Top Predictions")
-
-            top3 = pred[0].argsort()[-3:][::-1]
-
-            for i in top3:
-
-                name = class_indices[str(i)]
-
-                p,d = name.split("___")
-                d = d.replace("_"," ")
-
-                c = pred[0][i]*100
-
-                st.write(f"{p} — {d} : {c:.2f}%")
-
-
-            st.subheader("Download Report")
-
-            report=create_report(plant,disease,conf,sev)
-
-            with open(report,"rb") as file:
-
-                st.download_button(
-                    label="Download Diagnosis Report",
-                    data=file,
-                    file_name="plant_disease_report.pdf",
-                    mime="application/pdf"
-                )
-
-
-# ---------------- HISTORY ---------------- #
-
 st.subheader("Prediction History")
 
 hist=load_history()
 
 st.dataframe(hist,use_container_width=True)
-
-
-st.markdown("---")
-
-st.markdown(
-"""
-<div style='text-align:center;font-size:16px;margin-top:20px;'>
-Created by <b>Soham Mondal</b><br>
-For any query contact <b>sohammondal29@gmail.com</b>
-</div>
-""",
-unsafe_allow_html=True
-)
