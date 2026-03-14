@@ -6,3 +6,4 @@ pillow
 fpdf
 gdown
 h5py
+opencv-python-headless
