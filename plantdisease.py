@@ -11,10 +11,116 @@ from PIL import Image
 from datetime import datetime
 from fpdf import FPDF
 import gdown
-import gc
 
 from tensorflow.keras.applications.mobilenet_v2 import MobileNetV2, preprocess_input, decode_predictions
 
+
+# ---------------- PAGE CONFIG ----------------
+
+st.set_page_config(
+    page_title="Plant Disease Predictor",
+    page_icon="🌿",
+    layout="wide"
+)
+
+
+# ---------------- THEME ----------------
+
+st.markdown("""
+<style>
+
+/* LIGHT MODE */
+
+.stApp {
+    background: linear-gradient(135deg,#e8f5e9,#c8e6c9);
+    color:#0b3d2e;
+}
+
+/* DARK MODE */
+
+@media (prefers-color-scheme: dark) {
+
+.stApp {
+    background: linear-gradient(135deg,#06281c,#0f5132,#198754);
+    color:#c9ffd5;
+}
+
+}
+
+/* TITLE */
+
+h1 {
+    font-size:64px;
+    font-weight:800;
+    letter-spacing:-2px;
+    text-align:center;
+}
+
+/* TAGLINE */
+
+.tagline {
+    font-size:20px;
+    text-align:center;
+}
+
+/* ACCENT */
+
+.accent { color:#1b5e20; }
+
+@media (prefers-color-scheme: dark) {
+.accent { color:#6fff8c; }
+}
+
+/* SECTION */
+
+.section-title {
+    font-size:28px;
+    margin-top:40px;
+}
+
+/* IMAGE STYLE */
+
+img {
+    border-radius:12px;
+    transition: transform 0.3s ease;
+}
+
+img:hover {
+    transform: scale(1.05);
+}
+
+/* BLUE DOWNLOAD BUTTON */
+
+.stDownloadButton button {
+    background-color:#0d6efd !important;
+    color:white !important;
+    border-radius:8px !important;
+    font-weight:bold !important;
+}
+
+/* FOOTER */
+
+.footer {
+    margin-top:60px;
+    padding-top:20px;
+    border-top:1px solid #c8e6c9;
+    font-size:14px;
+    text-align:center;
+}
+
+@media (prefers-color-scheme: dark) {
+
+.footer {
+    border-top:1px solid #1b4332;
+}
+
+}
+
+</style>
+""", unsafe_allow_html=True)
+
+
+# ---------------- PATHS ----------------
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -26,25 +132,22 @@ EXAMPLE_FOLDER = os.path.join(BASE_DIR,"Examples")
 FILE_ID = "1Y8dRQTEE_16c8UEjRFdoppBMi-cZrzJ7"
 
 
-# ---------------- DOWNLOAD MODEL ---------------- #
+# ---------------- DOWNLOAD MODEL ----------------
 
 def download_model():
-
     if not os.path.exists(MODEL_PATH):
-
-        with st.spinner("Downloading AI model (first run only)..."):
+        with st.spinner("Downloading AI model..."):
             gdown.download(id=FILE_ID, output=MODEL_PATH, quiet=False)
 
 download_model()
 
 
-# ---------------- LOAD TFLITE MODEL ---------------- #
+# ---------------- LOAD MODEL ----------------
 
 @st.cache_resource
 def load_disease_model():
 
     interpreter = tf.lite.Interpreter(model_path=MODEL_PATH)
-
     interpreter.allocate_tensors()
 
     input_details = interpreter.get_input_details()
@@ -56,20 +159,20 @@ def load_disease_model():
 interpreter,input_details,output_details = load_disease_model()
 
 
-# ---------------- LOAD LEAF DETECTOR ---------------- #
+# ---------------- LEAF DETECTOR ----------------
 
 @st.cache_resource
 def load_leaf_detector():
     return MobileNetV2(weights="imagenet")
 
 
-# ---------------- LOAD CLASS INDICES ---------------- #
+# ---------------- CLASS LABELS ----------------
 
 with open(CLASS_FILE) as f:
     class_indices = json.load(f)
 
 
-# ---------------- DATABASE ---------------- #
+# ---------------- DATABASE ----------------
 
 conn = sqlite3.connect(DB_FILE,check_same_thread=False)
 cur = conn.cursor()
@@ -81,7 +184,7 @@ cur.execute(
 conn.commit()
 
 
-# ---------------- PDF REPORT ---------------- #
+# ---------------- PDF REPORT ----------------
 
 def create_report(plant,disease,confidence,severity):
 
@@ -104,28 +207,25 @@ def create_report(plant,disease,confidence,severity):
     return file
 
 
-# ---------------- IMAGE PROCESSING ---------------- #
+# ---------------- IMAGE PROCESS ----------------
 
 def preprocess_image(image,size=(224,224)):
 
     image=image.resize(size).convert("RGB")
 
-    img=np.array(image,dtype=np.float32)
-
-    img=img/255.0
+    img=np.array(image,dtype=np.float32)/255.0
     img=np.expand_dims(img,axis=0)
 
     return img
 
 
-# ---------------- PREDICTION USING TFLITE ---------------- #
+# ---------------- PREDICT ----------------
 
 def predict_disease(image):
 
     img=preprocess_image(image)
 
     interpreter.set_tensor(input_details[0]['index'],img)
-
     interpreter.invoke()
 
     pred=interpreter.get_tensor(output_details[0]['index'])
@@ -138,7 +238,7 @@ def predict_disease(image):
     return label,conf,pred
 
 
-# ---------------- LEAF DETECTION ---------------- #
+# ---------------- LEAF CHECK ----------------
 
 def detect_leaf(image):
 
@@ -147,39 +247,32 @@ def detect_leaf(image):
     img=image.resize((224,224)).convert("RGB")
 
     arr=np.array(img,dtype=np.float32)
-
     arr=np.expand_dims(arr,axis=0)
-
     arr=preprocess_input(arr)
 
     preds=leaf_model.predict(arr,verbose=0)
 
     decoded=decode_predictions(preds,top=5)[0]
 
-    plant_keywords=["leaf","tree","plant","flower","corn","grape","apple"]
+    keywords=["leaf","plant","tree","flower","corn","grape","apple"]
 
     for _,label,_ in decoded:
-        for word in plant_keywords:
+        for word in keywords:
             if word in label.lower():
-
-                gc.collect()
-
                 return True
-
-    gc.collect()
 
     return False
 
 
-# ---------------- DATABASE FUNCTIONS ---------------- #
+# ---------------- SAVE HISTORY ----------------
 
 def save_history(plant,disease,conf):
 
-    current_time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    time=datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     cur.execute(
         "INSERT INTO history VALUES(?,?,?,?)",
-        (current_time,plant,disease,conf)
+        (time,plant,disease,conf)
     )
 
     conn.commit()
@@ -193,7 +286,7 @@ def load_history():
     )
 
 
-# ---------------- SEVERITY ---------------- #
+# ---------------- SEVERITY ----------------
 
 def severity(image):
 
@@ -202,9 +295,8 @@ def severity(image):
     gray=np.mean(img,axis=2)
 
     infected=np.sum(gray<120)
-    total=gray.size
 
-    ratio=infected/total
+    ratio=infected/gray.size
 
     if ratio<0.1:
         return "Low"
@@ -214,100 +306,68 @@ def severity(image):
         return "Severe"
 
 
-# ---------------- PAGE CONFIG ---------------- #
+# ---------------- HERO ----------------
 
-st.set_page_config(page_title="Plant Disease Predictor",layout="wide")
+st.markdown("<h1><span class='accent'>Plant</span> Disease Predictor</h1>",unsafe_allow_html=True)
 
+st.markdown(
+"<div class='tagline'>Scan a leaf. Detect the disease. Protect your plants.</div>",
+unsafe_allow_html=True
+)
 
-# ---------------- DARK UI ---------------- #
-
-st.markdown("""
-<style>
-
-.stApp {
-background: linear-gradient(135deg,#0f2027,#203a43,#2c5364);
-color:white;
-}
-
-h1,h2,h3 {
-color:white;
-}
-
-label {
-color:white !important;
-}
-
-</style>
-""",unsafe_allow_html=True)
+st.markdown("<br>",unsafe_allow_html=True)
 
 
-st.title("🌿 AI Plant Disease Detection System")
-
-
-# ---------------- IMAGE INPUT ---------------- #
-
-if "image" not in st.session_state:
-    st.session_state.image=None
-
+# ---------------- IMAGE INPUT ----------------
 
 input_choice=st.radio(
 "Select Image Source",
 ["Use Example Image","Upload Leaf Image","Camera"]
 )
 
+image=None
 
 if input_choice=="Use Example Image":
 
-    example_files=sorted(os.listdir(EXAMPLE_FOLDER))
+    files=sorted(os.listdir(EXAMPLE_FOLDER))
 
-    selected_example=st.selectbox("Select Example",example_files)
+    example=st.selectbox("Choose example",files)
 
-    if selected_example:
-
-        example_path=os.path.join(EXAMPLE_FOLDER,selected_example)
-
-        st.session_state.image=Image.open(example_path).convert("RGB")
-
+    image=Image.open(os.path.join(EXAMPLE_FOLDER,example))
 
 elif input_choice=="Upload Leaf Image":
 
-    uploaded=st.file_uploader("Browse Leaf Image",type=["jpg","jpeg","png"])
+    uploaded=st.file_uploader("Upload leaf",type=["jpg","png","jpeg"])
 
     if uploaded:
-        st.session_state.image=Image.open(uploaded).convert("RGB")
-
+        image=Image.open(uploaded)
 
 elif input_choice=="Camera":
 
-    uploaded=st.camera_input("Take Leaf Photo")
+    cam=st.camera_input("Take photo")
 
-    if uploaded:
-        st.session_state.image=Image.open(uploaded).convert("RGB")
-
-
-image=st.session_state.image
+    if cam:
+        image=Image.open(cam)
 
 
-# ---------------- PREDICTION ---------------- #
+# ---------------- PREDICTION ----------------
 
 if image is not None:
 
-    col1,col2=st.columns(2)
+    col1,col2=st.columns([1,2])
 
     with col1:
-        st.image(image,width=500)
+        st.image(image,width=350)
 
     with col2:
 
         if not detect_leaf(image):
 
-            st.error("The uploaded image does not appear to contain a plant leaf.")
+            st.error("Image does not appear to contain a leaf.")
 
         else:
 
-            with st.spinner("Analyzing leaf disease..."):
-
-                label,conf,pred=predict_disease(image)
+            label,conf,pred=predict_disease(image)
 
             plant,disease=label.split("___")
             disease=disease.replace("_"," ")
@@ -317,12 +377,16 @@ if image is not None:
             save_history(plant,disease,conf)
 
             st.success(f"Plant: {plant}")
-            st.error(f"Disease: {disease}")
+
+            if "healthy" in disease.lower():
+                st.success(f"Disease: {disease}")
+            else:
+                st.error(f"Disease: {disease}")
+
             st.info(f"Confidence: {conf:.2f}%")
-            st.warning(f"Severity Level: {sev}")
+            st.warning(f"Severity: {sev}")
 
-
-            st.subheader("Top Predictions")
+            st.markdown("<div class='section-title'>Top Predictions</div>",unsafe_allow_html=True)
 
             top3 = pred[0].argsort()[-3:][::-1]
 
@@ -335,39 +399,34 @@ if image is not None:
 
                 c = pred[0][i]*100
 
-                st.write(f"{p} — {d} : {c:.2f}%")
-
-
-            st.subheader("Download Report")
+                st.write(f"{p} — {d}: {c:.2f}%")
 
             report=create_report(plant,disease,conf,sev)
 
-            with open(report,"rb") as file:
+            with open(report,"rb") as f:
 
                 st.download_button(
-                    label="Download Diagnosis Report",
-                    data=file,
-                    file_name="plant_disease_report.pdf",
-                    mime="application/pdf"
+                    "Download Diagnosis Report",
+                    data=f,
+                    file_name="plant_disease_report.pdf"
                 )
 
 
-# ---------------- HISTORY ---------------- #
+# ---------------- HISTORY ----------------
 
+st.markdown("<br>",unsafe_allow_html=True)
 st.subheader("Prediction History")
 
-hist=load_history()
-
-st.dataframe(hist,use_container_width=True)
+st.dataframe(load_history(),use_container_width=True)
 
 
-st.markdown("---")
+# ---------------- FOOTER ----------------
 
 st.markdown(
 """
-<div style='text-align:center;font-size:16px;margin-top:20px;'>
+<div class="footer">
 Created by <b>Soham Mondal</b><br>
-For any query contact <b>sohammondal29@gmail.com</b>
+Contact: <b>sohammondal29@gmail.com</b>
 </div>
 """,
 unsafe_allow_html=True
